@@ -316,10 +316,25 @@ def _resend_request(method: str, path: str, api_key: str, payload=None):
         raise SystemExit(f"[Network error] could not reach Resend: {e.reason}")
 
 
-def resend_list_contacts(api_key: str, audience_id: str = None):
-    """Fetch contacts. Uses the audience-scoped endpoint when an audience id is
-    given, otherwise the global contacts endpoint."""
-    path = f"/audiences/{audience_id}/contacts" if audience_id else "/contacts"
+def resend_list_contacts(api_key: str, audience_id: str = None, segment_id: str = None):
+    """Fetch contacts from Resend.
+
+    Resend's newer model makes Contacts GLOBAL entities (a contact can belong to
+    zero, one, or many audiences). The reliable way to get everyone is the
+    global /contacts endpoint. We still support the legacy per-audience endpoint,
+    but if it returns nothing we fall back to the global list automatically.
+    """
+    if audience_id:
+        legacy = _resend_request("GET", f"/audiences/{audience_id}/contacts", api_key)
+        contacts = legacy.get("data", [])
+        if contacts:
+            return contacts
+        print("[Resend] That audience has no contacts attached "
+              "(contacts are global now) -- falling back to your full contact list...")
+
+    path = "/contacts"
+    if segment_id:
+        path += f"?segment_id={segment_id}"
     result = _resend_request("GET", path, api_key)
     return result.get("data", [])
 
@@ -363,7 +378,18 @@ def run_resend(brief, content, sender_name, args):
         )
 
     audience_id = args.audience_id or os.environ.get("RESEND_AUDIENCE_ID")
-    contacts = resend_list_contacts(api_key, audience_id)
+    segment_id = args.segment_id or os.environ.get("RESEND_SEGMENT_ID")
+    contacts = resend_list_contacts(api_key, audience_id, segment_id)
+
+    if not contacts:
+        raise SystemExit(
+            "No contacts returned by Resend. Check that:\n"
+            "  1. Your RESEND_API_KEY belongs to the same account/workspace where\n"
+            "     you see the contacts in the dashboard.\n"
+            "  2. You actually have contacts at resend.com/audience.\n"
+            "  3. If you set RESEND_AUDIENCE_ID, the contacts are attached to it\n"
+            "     (or just remove that line to pull ALL contacts)."
+        )
 
     # Keep only subscribed contacts that have an email.
     recipients = [c for c in contacts if c.get("email") and not c.get("unsubscribed")]
@@ -420,7 +446,9 @@ def parse_args():
     parser.add_argument("--resend", action="store_true",
                         help="Send to your entire Resend audience.")
     parser.add_argument("--audience-id", default=None,
-                        help="Resend audience id (else RESEND_AUDIENCE_ID, else all contacts).")
+                        help="Legacy Resend audience id (else RESEND_AUDIENCE_ID, else all contacts).")
+    parser.add_argument("--segment-id", default=None,
+                        help="Resend segment id to filter contacts (else RESEND_SEGMENT_ID).")
     parser.add_argument("--from", dest="from_addr", default=None,
                         help='Sender, e.g. "OneMan <hello@yourdomain.com>" (else RESEND_FROM).')
     parser.add_argument("--personalize", action="store_true",
