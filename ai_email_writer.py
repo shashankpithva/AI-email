@@ -301,6 +301,10 @@ def _resend_request(method: str, path: str, api_key: str, payload=None):
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Authorization", f"Bearer {api_key}")
     req.add_header("Content-Type", "application/json")
+    req.add_header("Accept", "application/json")
+    # Cloudflare (in front of Resend) blocks bare script User-Agents with a
+    # 403 / error code 1010, so identify ourselves like a normal client.
+    req.add_header("User-Agent", "OneMan-AI-Email/1.0 (+https://github.com/shashankpithva/AI-email)")
     try:
         with urllib.request.urlopen(req) as resp:
             body = resp.read().decode("utf-8")
